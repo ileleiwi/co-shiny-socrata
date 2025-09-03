@@ -7,6 +7,7 @@ socrata_v3_fetch <- function(view_id,
                              include_system = FALSE,
                              token_env = "SOCRATA_APP_TOKEN",
                              fallback_v2_on_error = TRUE) {
+
   stopifnot(nchar(view_id) > 0)
   library(httr); library(jsonlite); library(dplyr); library(purrr); library(glue); library(tibble)
 
@@ -19,10 +20,7 @@ socrata_v3_fetch <- function(view_id,
   out <- list()
 
   parse_rows <- function(payload) {
-    # Handle common v3 shapes:
-    #  A) payload$data$rows (array-of-arrays) + col names in payload$data$columns$name or $fieldName
-    #  B) payload$data (array-of-objects)
-    #  C) payload$rows at top level
+    # A) payload$data$rows + payload$data$columns
     if (is.list(payload$data) && !is.null(payload$data$rows)) {
       rows <- payload$data$rows
       cols <- payload$data$columns
@@ -31,23 +29,20 @@ socrata_v3_fetch <- function(view_id,
         if (!is.null(cols$name)) cn <- unlist(cols$name, use.names = FALSE)
         if (is.null(cn) && !is.null(cols$fieldName)) cn <- unlist(cols$fieldName, use.names = FALSE)
       }
-      df <- as_tibble(do.call(rbind, lapply(rows, \(r) unlist(r, recursive = FALSE))))
+      df <- as_tibble(do.call(rbind, lapply(rows, function(r) unlist(r, recursive = FALSE))))
       if (!is.null(cn) && length(cn) == ncol(df)) names(df) <- cn
       return(df)
     }
-
+    # B) payload$data is array-of-objects
     if (is.list(payload$data) && length(payload$data) > 0 && is.null(payload$data$rows)) {
-      # array-of-objects
-      return(map_dfr(payload$data, \(x) as_tibble(x)))
+      return(map_dfr(payload$data, function(x) as_tibble(x)))
     }
-
+    # C) payload$rows at top level
     if (!is.null(payload$rows)) {
-      df <- as_tibble(do.call(rbind, lapply(payload$rows, \(r) unlist(r, recursive = FALSE))))
+      df <- as_tibble(do.call(rbind, lapply(payload$rows, function(r) unlist(r, recursive = FALSE))))
       return(df)
     }
-
-    # Unknown shape
-    stop("Unexpected SODA v3 response shape; keys: ", paste(names(payload), collapse = ", "))
+    stop("Unexpected SODA v3 response shape; top-level keys: ", paste(names(payload), collapse = ", "))
   }
 
   repeat {
@@ -67,7 +62,6 @@ socrata_v3_fetch <- function(view_id,
       msg <- if (inherits(resp, "try-error")) as.character(resp) else paste(status_code(resp), content(resp, "text"))
       if (isTRUE(fallback_v2_on_error)) {
         message("v3 query failed (", msg, "). Falling back to v2 /resource …")
-        # v2 fallback: GET /resource/<id>.json?$limit=...
         v2_url <- glue("https://{domain}/resource/{view_id}.json?$limit={page_size}&$offset={(page_num-1L)*page_size}")
         if (!is.na(app_token) && nchar(app_token) > 0) {
           resp2 <- GET(v2_url, add_headers("X-App-Token" = app_token), timeout(60))

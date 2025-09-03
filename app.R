@@ -1,9 +1,11 @@
+# app.R
 library(shiny)
 library(yaml)
 library(dplyr)
 library(lubridate)
 library(ggplot2)
 library(DT)
+library(rlang)
 
 source(file.path("R","socrata_v3.R"))
 cfg <- yaml::read_yaml("config.yml")
@@ -19,8 +21,10 @@ ui <- fluidPage(
       hr(),
       uiOutput("colpickers"),
       hr(),
-      helpText("Using POST to /api/v3/views/<view_id>/query.json. Set env ",
-               strong(cfg$app_token_env), " to a token for higher rate limits.")
+      helpText(
+        "Using POST to /api/v3/views/<view_id>/query.json. Set env ",
+        strong(cfg$app_token_env), " to a token for higher rate limits."
+      )
     ),
     mainPanel(
       tabsetPanel(
@@ -36,68 +40,84 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  data_r <- eventReactive(input$refresh, {
-  withProgress(message = "Querying Socrata v3 …", value = 0.1, {
-    tryCatch({
-      df <- socrata_v3_fetch(
-        view_id = input$view_id,
-        domain  = cfg$socrata_domain,
-        soql    = input$soql,
-        token_env = cfg$app_token_env
-      )
-      incProgress(0.9)
-      validate(need(nrow(df) > 0, "No rows returned. Try a different SoQL query or view id."))
-      df
-    }, error = function(e) {
-      showModal(modalDialog(
-        title = "Fetch failed",
-        paste("Socrata API error:", conditionMessage(e)),
-        easyClose = TRUE, footer = modalButton("Close")
-      ))
-      return(NULL)
-    })
-  })
-}, ignoreInit = TRUE)
 
-observeEvent(data_r(), {
-  req(!is.null(data_r()))
-  current(data_r())
-})
+  current <- reactiveVal(NULL)
+
+  data_r <- eventReactive(input$refresh, {
+    withProgress(message = "Querying Socrata v3 …", value = 0.1, {
+      tryCatch({
+        df <- socrata_v3_fetch(
+          view_id  = input$view_id,
+          domain   = cfg$socrata_domain,
+          soql     = input$soql,
+          token_env = cfg$app_token_env
+        )
+        incProgress(0.9)
+        validate(need(nrow(df) > 0, "No rows returned. Try a different SoQL query or view id."))
+        df
+      }, error = function(e) {
+        showModal(modalDialog(
+          title = "Fetch failed",
+          paste("Socrata API error:", conditionMessage(e)),
+          easyClose = TRUE, footer = modalButton("Close")
+        ))
+        NULL
+      })
+    })
+  }, ignoreInit = TRUE)
+
+  observeEvent(data_r(), {
+    req(!is.null(data_r()))
+    df <- data_r()
 
     # Try to coerce likely date/timestamp columns
-    dt_guess <- names(df)[grepl("date|time|timestamp|reported|episode|visit", names(df), ignore.case = TRUE)]
+    dt_guess <- names(df)[grepl("date|time|timestamp|reported|episode|visit",
+                                names(df), ignore.case = TRUE)]
     for (nm in dt_guess) {
-      # try both date and datetime
-      suppressWarnings({
-        if (is.character(df[[nm]]) && all(nchar(df[[nm]]) >= 10)) {
-          dt_val <- suppressWarnings(lubridate::ymd_hms(df[[nm]], quiet = TRUE))
-          if (sum(!is.na(dt_val)) > 0) df[[nm]] <- dt_val
-          else {
-            d_val <- suppressWarnings(lubridate::ymd(df[[nm]], quiet = TRUE))
-            if (sum(!is.na(d_val)) > 0) df[[nm]] <- d_val
-          }
+      if (is.character(df[[nm]]) && all(nchar(df[[nm]]) >= 10, na.rm = TRUE)) {
+        dt_val <- suppressWarnings(lubridate::ymd_hms(df[[nm]], quiet = TRUE))
+        if (sum(!is.na(dt_val)) > 0) {
+          df[[nm]] <- dt_val
+        } else {
+          d_val <- suppressWarnings(lubridate::ymd(df[[nm]], quiet = TRUE))
+          if (sum(!is.na(d_val)) > 0) df[[nm]] <- d_val
         }
-      })
+      }
     }
     current(df)
   })
 
   output$colpickers <- renderUI({
-  df <- current()
-  req(!is.null(df))
-  num_cols  <- names(df)[sapply(df, is.numeric)]
-  chr_cols  <- names(df)[sapply(df, \(x) is.character(x) || is.factor(x))]
-  date_cols <- names(df)[sapply(df, \(x) inherits(x, "Date") || inherits(x, "POSIXct"))]
-  tagList(
-    selectInput("date_col",  "Date column",   choices = c("", date_cols), selected = if (length(date_cols)) date_cols[1] else ""),
-    selectInput("group_col", "Group column",  choices = c("", chr_cols),   selected = if (length(chr_cols)) chr_cols[1] else ""),
-    selectInput("value_col", "Numeric value", choices = c("", num_cols),   selected = if (length(num_cols)) num_cols[1] else "")
-  )
-})
+    df <- current()
+    req(!is.null(df))
+
+    num_cols  <- names(df)[sapply(df, is.numeric)]
+    chr_cols  <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
+    date_cols <- names(df)[sapply(df, function(x) inherits(x, "Date") || inherits(x, "POSIXct"))]
+
+    tagList(
+      selectInput(
+        "date_col", "Date column",
+        choices = c("", date_cols),
+        selected = if (length(date_cols)) date_cols[1] else ""
+      ),
+      selectInput(
+        "group_col", "Group column",
+        choices = c("", chr_cols),
+        selected = if (length(chr_cols)) chr_cols[1] else ""
+      ),
+      selectInput(
+        "value_col", "Numeric value",
+        choices = c("", num_cols),
+        selected = if (length(num_cols)) num_cols[1] else ""
+      )
+    )
+  })
 
   filtered <- reactive({
-    req(current())
-    current()
+    df <- current()
+    req(df)
+    df
   })
 
   output$ts_plot <- renderPlot({
@@ -118,16 +138,19 @@ observeEvent(data_r(), {
     req(input$group_col, input$value_col, input$group_col != "", input$value_col != "")
     df %>%
       group_by(.data[[input$group_col]]) %>%
-      summarise(n = n(),
-                total = sum(.data[[input$value_col]], na.rm = TRUE),
-                mean = mean(.data[[input$value_col]], na.rm = TRUE), .groups = "drop") %>%
+      summarise(
+        n     = n(),
+        total = sum(.data[[input$value_col]], na.rm = TRUE),
+        mean  = mean(.data[[input$value_col]], na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
       arrange(desc(total)) %>%
       DT::datatable(rownames = FALSE, options = list(pageLength = 10))
   })
 
   output$tbl_raw <- renderDT({
-    req(filtered())
-    DT::datatable(filtered(), options = list(scrollX = TRUE, pageLength = 25))
+    df <- filtered()
+    DT::datatable(df, options = list(scrollX = TRUE, pageLength = 25))
   })
 }
 
