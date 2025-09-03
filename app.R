@@ -1,3 +1,5 @@
+message("Token present? ", nzchar(Sys.getenv(cfg$app_token_env)))
+
 # app.R
 library(shiny)
 library(yaml)
