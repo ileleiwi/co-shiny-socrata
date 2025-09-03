@@ -12,7 +12,6 @@ socrata_v2_fetch <- function(view_id,
   base <- glue("https://{domain}/resource/{view_id}.json")
   tok  <- Sys.getenv(token_env, "")
 
-  # Always read as RAW, then convert to UTF-8 string
   read_text <- function(resp) {
     raw <- httr::content(resp, as = "raw")
     if (length(raw) == 0) return("")
@@ -29,15 +28,12 @@ socrata_v2_fetch <- function(view_id,
 
   for (i in seq_len(max_pages)) {
     soql_page <- soql
-    if (!has_limit)                  soql_page <- paste(soql_page, sprintf("LIMIT %d", page_size))
-    if (!has_offset && offset > 0L)  soql_page <- paste(soql_page, sprintf("OFFSET %d", offset))
+    if (!has_limit)                 soql_page <- paste(soql_page, sprintf("LIMIT %d", page_size))
+    if (!has_offset && offset > 0L) soql_page <- paste(soql_page, sprintf("OFFSET %d", offset))
 
-    url <- httr::modify_url(base, query = list(`$query` = soql_page))
-    resp <- if (nzchar(tok)) {
-      httr::GET(url, httr::add_headers("X-App-Token" = tok), httr::timeout(60))
-    } else {
-      httr::GET(url, httr::timeout(60))
-    }
+    url  <- httr::modify_url(base, query = list(`$query` = soql_page))
+    hdrs <- if (nzchar(tok)) httr::add_headers("X-App-Token" = tok) else NULL
+    resp <- httr::GET(url, hdrs, httr::timeout(60))
 
     status <- httr::status_code(resp)
     txt <- read_text(resp)
@@ -47,25 +43,20 @@ socrata_v2_fetch <- function(view_id,
     }
     if (!nzchar(txt)) stop(sprintf("Empty SODA v2 body (HTTP %s).", status))
 
-    dat <- tryCatch(
-      jsonlite::fromJSON(txt, simplifyVector = TRUE),
-      error = function(e) {
-        stop(sprintf("JSON parse failed (HTTP %s). Class: %s. Body[0:300]: %s",
-                     status, paste(class(txt), collapse = ", "), substr(txt, 1, 300)))
-      }
-    )
+    dat <- tryCatch(jsonlite::fromJSON(txt, simplifyVector = TRUE),
+                    error = function(e) stop(sprintf(
+                      "JSON parse failed (HTTP %s). Body[0:300]: %s",
+                      status, substr(txt, 1, 300))))
 
     df <- tibble::as_tibble(dat)
 
-    # Coerce number-like character cols to numeric (common on Socrata)
+    # Coerce number-like character columns to numeric (best-effort)
     if (nrow(df)) {
       numish <- vapply(df, function(x) is.character(x) && any(nzchar(x)),
                        logical(1), USE.NAMES = FALSE)
       if (any(numish)) {
-        idx <- which(numish)
-        for (j in idx) {
+        for (j in which(numish)) {
           y <- suppressWarnings(as.numeric(df[[j]]))
-          # Only replace if a meaningful fraction converted
           if (sum(!is.na(y)) >= 0.6 * length(y)) df[[j]] <- y
         }
       }
