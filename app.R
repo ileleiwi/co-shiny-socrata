@@ -37,19 +37,32 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   data_r <- eventReactive(input$refresh, {
-    withProgress(message = "Querying Socrata v3", value = 0.1, {
-      df <- socrata_v3_fetch(view_id = input$view_id,
-                             domain = cfg$socrata_domain,
-                             soql = input$soql,
-                             token_env = cfg$app_token_env)
+  withProgress(message = "Querying Socrata v3 …", value = 0.1, {
+    tryCatch({
+      df <- socrata_v3_fetch(
+        view_id = input$view_id,
+        domain  = cfg$socrata_domain,
+        soql    = input$soql,
+        token_env = cfg$app_token_env
+      )
       incProgress(0.9)
+      validate(need(nrow(df) > 0, "No rows returned. Try a different SoQL query or view id."))
       df
+    }, error = function(e) {
+      showModal(modalDialog(
+        title = "Fetch failed",
+        paste("Socrata API error:", conditionMessage(e)),
+        easyClose = TRUE, footer = modalButton("Close")
+      ))
+      return(NULL)
     })
-  }, ignoreInit = TRUE)
+  })
+}, ignoreInit = TRUE)
 
-  current <- reactiveVal(NULL)
-  observeEvent(data_r(), {
-    df <- data_r()
+observeEvent(data_r(), {
+  req(!is.null(data_r()))
+  current(data_r())
+})
 
     # Try to coerce likely date/timestamp columns
     dt_guess <- names(df)[grepl("date|time|timestamp|reported|episode|visit", names(df), ignore.case = TRUE)]
@@ -70,18 +83,17 @@ server <- function(input, output, session) {
   })
 
   output$colpickers <- renderUI({
-    req(current())
-    df <- current()
-    num_cols <- names(df)[sapply(df, is.numeric)]
-    chr_cols <- names(df)[sapply(df, \(x) is.character(x) || is.factor(x))]
-    date_cols <- names(df)[sapply(df, \(x) inherits(x, "Date") || inherits(x, "POSIXct"))]
-
-    tagList(
-      selectInput("date_col", "Date column", choices = c("", date_cols), selected = if (length(date_cols)) date_cols[1] else ""),
-      selectInput("group_col", "Group column", choices = c("", chr_cols), selected = if (length(chr_cols)) chr_cols[1] else ""),
-      selectInput("value_col", "Numeric value column", choices = c("", num_cols), selected = if (length(num_cols)) num_cols[1] else "")
-    )
-  })
+  df <- current()
+  req(!is.null(df))
+  num_cols  <- names(df)[sapply(df, is.numeric)]
+  chr_cols  <- names(df)[sapply(df, \(x) is.character(x) || is.factor(x))]
+  date_cols <- names(df)[sapply(df, \(x) inherits(x, "Date") || inherits(x, "POSIXct"))]
+  tagList(
+    selectInput("date_col",  "Date column",   choices = c("", date_cols), selected = if (length(date_cols)) date_cols[1] else ""),
+    selectInput("group_col", "Group column",  choices = c("", chr_cols),   selected = if (length(chr_cols)) chr_cols[1] else ""),
+    selectInput("value_col", "Numeric value", choices = c("", num_cols),   selected = if (length(num_cols)) num_cols[1] else "")
+  )
+})
 
   filtered <- reactive({
     req(current())
