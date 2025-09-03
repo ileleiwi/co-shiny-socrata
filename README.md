@@ -20,8 +20,8 @@ Interactive Shiny app that queries Colorado’s open-data **Socrata SODA v2** en
 
 ```bash
 # first time
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>
+git clone https://github.com/ileleiwi/co-shiny-socrata.git
+cd co-shiny-socrata
 
 # later, to update
 git pull
