@@ -58,7 +58,7 @@ server <- function(input, output, session) {
         max_pages = 1L
       )
       incProgress(0.9)
-      validate(need(nrow(df) > 0, "No rows returned. Try a different SoQL query or view id."))
+      shiny::validate(shiny::need(nrow(df) > 0, "No rows returned. Try a different SoQL query or view id."))
       df
     }, error = function(e) {
       showModal(modalDialog(
