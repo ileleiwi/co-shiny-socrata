@@ -7,7 +7,7 @@ library(ggplot2)
 library(DT)
 library(rlang)
 
-source(file.path("R","socrata_v3.R"))
+source(file.path("R","socrata_v2.R"))
 cfg <- yaml::read_yaml("config.yml")
 
 message("Token present? ", nzchar(Sys.getenv(cfg$app_token_env)))
@@ -48,11 +48,13 @@ server <- function(input, output, session) {
   data_r <- eventReactive(input$refresh, {
     withProgress(message = "Querying Socrata v3 …", value = 0.1, {
       tryCatch({
-        df <- socrata_v3_fetch(
+        df <- socrata_v2_fetch(
           view_id  = input$view_id,
           domain   = cfg$socrata_domain,
           soql     = input$soql,
-          token_env = cfg$app_token_env
+          token_env = cfg$app_token_env,
+          page_size = 10000,
+          max_pages = 1L
         )
         incProgress(0.9)
         validate(need(nrow(df) > 0, "No rows returned. Try a different SoQL query or view id."))
