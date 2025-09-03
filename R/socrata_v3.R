@@ -13,11 +13,20 @@ socrata_v3_fetch <- function(view_id,
 
   base <- glue("https://{domain}/api/v3/views/{view_id}/query.json")
   app_token <- Sys.getenv(token_env, unset = NA_character_)
-  headers <- c("Content-Type" = "application/json", "Accept" = "application/json")
+  headers <- c("Accept" = "application/json")
   if (!is.na(app_token) && nchar(app_token) > 0) headers <- c(headers, "X-App-Token" = app_token)
 
-  page_num <- 1L
-  out <- list()
+  fetch_text <- function(resp) {
+    # Try text first
+    txt <- try(httr::content(resp, as = "text", encoding = "UTF-8"), silent = TRUE)
+    if (!inherits(txt, "try-error") && is.character(txt) && length(txt) == 1 && !is.na(txt)) return(txt)
+    # Fallback to raw -> character
+    raw <- try(httr::content(resp, as = "raw"), silent = TRUE)
+    if (!inherits(raw, "try-error") && length(raw) > 0) {
+      return(tryCatch(rawToChar(raw), error = function(e) ""))
+    }
+    ""
+  }
 
   parse_rows <- function(payload) {
     # A) payload$data$rows + payload$data$columns
@@ -42,8 +51,11 @@ socrata_v3_fetch <- function(view_id,
       df <- as_tibble(do.call(rbind, lapply(payload$rows, function(r) unlist(r, recursive = FALSE))))
       return(df)
     }
-    stop("Unexpected SODA v3 response shape; top-level keys: ", paste(names(payload), collapse = ", "))
+    stop("Unexpected SODA v3 response shape; keys: ", paste(names(payload), collapse = ", "))
   }
+
+  page_num <- 1L
+  out <- list()
 
   repeat {
     body <- list(
@@ -51,15 +63,16 @@ socrata_v3_fetch <- function(view_id,
       page  = list(pageNumber = page_num, pageSize = page_size),
       includeSynthetic = isTRUE(include_system)
     )
+
     resp <- try(POST(base,
                      add_headers(.headers = headers),
-                     body = toJSON(body, auto_unbox = TRUE, null = "null"),
-                     encode = "raw",
+                     body   = body,
+                     encode = "json",      # << important: let httr set headers + serialize
                      timeout(60)),
                 silent = TRUE)
 
     if (inherits(resp, "try-error") || http_error(resp)) {
-      msg <- if (inherits(resp, "try-error")) as.character(resp) else paste(status_code(resp), content(resp, "text"))
+      msg <- if (inherits(resp, "try-error")) as.character(resp) else paste(status_code(resp), fetch_text(resp))
       if (isTRUE(fallback_v2_on_error)) {
         message("v3 query failed (", msg, "). Falling back to v2 /resource …")
         v2_url <- glue("https://{domain}/resource/{view_id}.json?$limit={page_size}&$offset={(page_num-1L)*page_size}")
@@ -69,13 +82,22 @@ socrata_v3_fetch <- function(view_id,
           resp2 <- GET(v2_url, timeout(60))
         }
         stop_for_status(resp2)
-        dat <- fromJSON(content(resp2, "text", encoding = "UTF-8"), simplifyVector = TRUE)
-        df <- as_tibble(dat)
+        txt2 <- fetch_text(resp2)
+        if (!nzchar(txt2)) stop("Empty body from Socrata v2 fallback.")
+        dat  <- fromJSON(txt2, simplifyVector = TRUE)
+        df   <- as_tibble(dat)
       } else {
         stop("SODA v3 request failed: ", msg)
       }
     } else {
-      payload <- fromJSON(content(resp, "text", encoding = "UTF-8"), simplifyVector = FALSE)
+      txt <- fetch_text(resp)
+      if (!nzchar(txt)) stop("Empty body from Socrata v3 (rate-limited or server error).")
+      # Helpful diagnostics if it isn't JSON
+      if (!isTRUE(jsonlite::validate(txt))) {
+        stop("Non-JSON body from v3 (status ", status_code(resp), "): ",
+             substr(txt, 1, 300), " …")
+      }
+      payload <- fromJSON(txt, simplifyVector = FALSE)
       if (!is.null(payload$errorCode) || !is.null(payload$error)) {
         stop("SODA v3 error: ", paste(c(payload$errorCode, payload$message, payload$error), collapse = " | "))
       }
