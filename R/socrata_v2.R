@@ -12,6 +12,7 @@ socrata_v2_fetch <- function(view_id,
   base <- glue("https://{domain}/resource/{view_id}.json")
   tok  <- Sys.getenv(token_env, "")
 
+  # Always read as RAW, then convert to UTF-8 string (prevents is.character() errors)
   read_text <- function(resp) {
     raw <- httr::content(resp, as = "raw")
     if (length(raw) == 0) return("")
