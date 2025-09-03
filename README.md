@@ -1,4 +1,4 @@
-Colorado Public Health — R Shiny (Socrata SODA v2)
+## Colorado Public Health — R Shiny (Socrata SODA v2)
 
 Interactive Shiny app that queries Colorado’s open-data Socrata SODA v2 endpoint
 (/resource/<VIEW_ID>.json using $query) and shows descriptive stats by date/group.
@@ -6,54 +6,57 @@ Interactive Shiny app that queries Colorado’s open-data Socrata SODA v2 endpoi
 Default dataset: a498-a63g (you can swap the view id anytime)
 Note: this demo view doesn’t have a true date column; the time-series will be blank until you use a dataset with dates.
 
-Requirements
+## Requirements
+- R (≥ 4.2)
+- Internet access to https://data.colorado.gov
+- (Recommended) a Socrata App Token
 
-R (≥ 4.2)
-
-Internet access to https://data.colorado.gov
-
-(Recommended) a Socrata App Token
-
-1) Get the code
+### 1) Get the code
+```
 # first time
 git clone https://github.com/<your-username>/<your-repo>.git
 cd <your-repo>
-
+```
+```
 # later, to update
 git pull
+```
 
-2) Install R packages
+### 2) Install R packages
+```
 R -q -e "source('install.R')"
+```
 
-3) Set your Socrata App Token
+### 3) Set your Socrata App Token
 
 Create a token at https://data.colorado.gov/profile/edit/developer_settings, then set it as an environment variable:
 
 macOS / Linux (bash/zsh)
-
+```
 export SOCRATA_APP_TOKEN="your_token_here"
-
+```
 
 Windows PowerShell
-
+```
 $env:SOCRATA_APP_TOKEN = "your_token_here"
-
+```
 
 R (temporary for this session)
-
+```
 Sys.setenv(SOCRATA_APP_TOKEN = "your_token_here")
-
+```
 
 The app reads the token from config.yml → app_token_env (defaults to SOCRATA_APP_TOKEN).
 The sidebar will show “Token detected ✓” when it’s available.
 
-4) Run the app locally
+### 4) Run the app locally
+```
 R -q -e "shiny::runApp(port=8080, host='127.0.0.1', launch.browser=TRUE)"
-
+```
 
 If your browser doesn’t open automatically, visit: http://localhost:8080
 
-5) Use the app
+### 5) Use the app
 
 Health check → should report row/column counts.
 
