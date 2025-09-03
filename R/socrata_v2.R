@@ -1,25 +1,24 @@
 # R/socrata_v2.R
 socrata_v2_fetch <- function(view_id,
-                             domain = "data.colorado.gov",
-                             soql = "SELECT *",
+                             domain    = "data.colorado.gov",
+                             soql      = "SELECT *",
                              page_size = 50000,
                              max_pages = 5L,
                              token_env = "SOCRATA_APP_TOKEN") {
+
   stopifnot(nchar(view_id) > 0)
   library(httr); library(jsonlite); library(glue); library(tibble); library(dplyr)
 
   base <- glue("https://{domain}/resource/{view_id}.json")
   tok  <- Sys.getenv(token_env, "")
 
-  fetch_text <- function(resp) {
-    # Prefer text; if not usable, fall back to raw->char
-    txt <- try(httr::content(resp, as = "text", encoding = "UTF-8"), silent = TRUE)
-    if (!inherits(txt, "try-error") && is.character(txt) && length(txt) == 1 && !is.na(txt)) return(txt)
-    raw <- try(httr::content(resp, as = "raw"), silent = TRUE)
-    if (!inherits(raw, "try-error") && length(raw) > 0) {
-      return(tryCatch(rawToChar(raw), error = function(e) ""))
-    }
-    ""
+  # Always read as RAW, then convert to UTF-8 string
+  read_text <- function(resp) {
+    raw <- httr::content(resp, as = "raw")
+    if (length(raw) == 0) return("")
+    txt <- rawToChar(raw)
+    Encoding(txt) <- "UTF-8"
+    txt
   }
 
   out <- list()
@@ -29,10 +28,9 @@ socrata_v2_fetch <- function(view_id,
   has_offset <- grepl("\\bOFFSET\\b", soql, ignore.case = TRUE)
 
   for (i in seq_len(max_pages)) {
-    # Put paging INSIDE SoQL; do NOT also send $limit/$offset when using $query.
     soql_page <- soql
-    if (!has_limit)  soql_page <- paste(soql_page, sprintf("LIMIT %d", page_size))
-    if (!has_offset && offset > 0L) soql_page <- paste(soql_page, sprintf("OFFSET %d", offset))
+    if (!has_limit)                  soql_page <- paste(soql_page, sprintf("LIMIT %d", page_size))
+    if (!has_offset && offset > 0L)  soql_page <- paste(soql_page, sprintf("OFFSET %d", offset))
 
     url <- httr::modify_url(base, query = list(`$query` = soql_page))
     resp <- if (nzchar(tok)) {
@@ -42,25 +40,35 @@ socrata_v2_fetch <- function(view_id,
     }
 
     status <- httr::status_code(resp)
-    txt <- fetch_text(resp)
+    txt <- read_text(resp)
 
     if (httr::http_error(resp)) {
-      stop(sprintf("SODA v2 HTTP %s. Body (first 300 chars): %s", status, substr(txt, 1, 300)))
+      stop(sprintf("SODA v2 HTTP %s. Body[0:300]: %s", status, substr(txt, 1, 300)))
     }
-    if (!nzchar(txt)) stop("Empty v2 response")
+    if (!nzchar(txt)) stop(sprintf("Empty SODA v2 body (HTTP %s).", status))
 
-    ok <- try(jsonlite::validate(txt), silent = TRUE)
-    if (inherits(ok, "try-error") || isFALSE(ok)) {
-      stop(sprintf("Non-JSON v2 body (status %s). First 300 chars: %s", status, substr(txt, 1, 300)))
-    }
+    dat <- tryCatch(
+      jsonlite::fromJSON(txt, simplifyVector = TRUE),
+      error = function(e) {
+        stop(sprintf("JSON parse failed (HTTP %s). Class: %s. Body[0:300]: %s",
+                     status, paste(class(txt), collapse = ", "), substr(txt, 1, 300)))
+      }
+    )
 
-    dat <- jsonlite::fromJSON(txt, simplifyVector = TRUE)
-    df  <- tibble::as_tibble(dat)
+    df <- tibble::as_tibble(dat)
 
-    # Coerce number-like character columns
+    # Coerce number-like character cols to numeric (common on Socrata)
     if (nrow(df)) {
-      numish <- vapply(df, function(x) is.character(x) && all(grepl("^[-+]?[0-9]*\\.?[0-9]+$", x[!is.na(x)])), logical(1))
-      df[numish] <- lapply(df[numish], function(x) suppressWarnings(as.numeric(x)))
+      numish <- vapply(df, function(x) is.character(x) && any(nzchar(x)),
+                       logical(1), USE.NAMES = FALSE)
+      if (any(numish)) {
+        idx <- which(numish)
+        for (j in idx) {
+          y <- suppressWarnings(as.numeric(df[[j]]))
+          # Only replace if a meaningful fraction converted
+          if (sum(!is.na(y)) >= 0.6 * length(y)) df[[j]] <- y
+        }
+      }
     }
 
     out[[length(out) + 1L]] <- df
