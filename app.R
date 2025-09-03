@@ -21,6 +21,8 @@ ui <- fluidPage(
                     placeholder = "e.g. SELECT * WHERE county = 'Denver' ORDER BY date DESC"),
       actionButton("refresh", "Fetch"),
       hr(),
+      actionButton("health", "Health check (SELECT * LIMIT 10)"),
+      hr(),
       uiOutput("colpickers"),
       hr(),
       helpText("Using GET to /resource/<view_id>.json with SoQL ($query). Set env ",
@@ -45,29 +47,30 @@ server <- function(input, output, session) {
   current <- reactiveVal(NULL)
 
   data_r <- eventReactive(input$refresh, {
-    withProgress(message = "Querying Socrata v3 …", value = 0.1, {
-      tryCatch({
-        df <- socrata_v2_fetch(
-          view_id  = input$view_id,
-          domain   = cfg$socrata_domain,
-          soql     = input$soql,
-          token_env = cfg$app_token_env,
-          page_size = 10000,
-          max_pages = 1L
-        )
-        incProgress(0.9)
-        validate(need(nrow(df) > 0, "No rows returned. Try a different SoQL query or view id."))
-        df
-      }, error = function(e) {
-        showModal(modalDialog(
-          title = "Fetch failed",
-          paste("Socrata API error:", conditionMessage(e)),
-          easyClose = TRUE, footer = modalButton("Close")
-        ))
-        NULL
-      })
+  withProgress(message = "Querying SODA v2 …", value = 0.1, {
+    tryCatch({
+      df <- socrata_v2_fetch(
+        view_id   = input$view_id,
+        domain    = cfg$socrata_domain,
+        soql      = input$soql,     # e.g., "SELECT * LIMIT 100"
+        token_env = cfg$app_token_env,
+        page_size = 1000,
+        max_pages = 1L
+      )
+      incProgress(0.9)
+      validate(need(nrow(df) > 0, "No rows returned. Try a different SoQL query or view id."))
+      df
+    }, error = function(e) {
+      showModal(modalDialog(
+        title = "Fetch failed",
+        paste("Socrata API error:", conditionMessage(e)),
+        easyClose = TRUE, footer = modalButton("Close")
+      ))
+      NULL
     })
-  }, ignoreInit = TRUE)
+  })
+}, ignoreInit = TRUE)
+
 
   observeEvent(data_r(), {
     req(!is.null(data_r()))
@@ -155,6 +158,31 @@ server <- function(input, output, session) {
     df <- filtered()
     DT::datatable(df, options = list(scrollX = TRUE, pageLength = 25))
   })
+
+  observeEvent(input$health, {
+  tryCatch({
+    df <- socrata_v2_fetch(
+      view_id   = input$view_id,
+      domain    = cfg$socrata_domain,
+      soql      = "SELECT * LIMIT 10",
+      token_env = cfg$app_token_env,
+      page_size = 10,
+      max_pages = 1L
+    )
+    showModal(modalDialog(
+      title = "Health check OK",
+      paste("Rows:", nrow(df), "| Cols:", ncol(df)),
+      easyClose = TRUE, footer = modalButton("Close")
+    ))
+  }, error = function(e) {
+    showModal(modalDialog(
+      title = "Health check failed",
+      paste(conditionMessage(e)),
+      easyClose = TRUE, footer = modalButton("Close")
+    ))
+  })
+})
+
 }
 
 shinyApp(ui, server)
