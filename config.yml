@@ -1,0 +1,3 @@
+socrata_domain: data.colorado.gov
+view_id: a498-a63g
+app_token_env: SOCRATA_APP_TOKEN
