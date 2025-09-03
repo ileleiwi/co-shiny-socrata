@@ -23,10 +23,9 @@ ui <- fluidPage(
       hr(),
       uiOutput("colpickers"),
       hr(),
-      helpText(
-        "Using POST to /api/v3/views/<view_id>/query.json. Set env ",
-        strong(cfg$app_token_env), " to a token for higher rate limits."
-      )
+      helpText("Using GET to /resource/<view_id>.json with SoQL ($query). Set env ",
+         strong(cfg$app_token_env), " to a token for higher rate limits.")
+
     ),
     mainPanel(
       tabsetPanel(
