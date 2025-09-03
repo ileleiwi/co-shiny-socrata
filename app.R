@@ -1,5 +1,3 @@
-message("Token present? ", nzchar(Sys.getenv(cfg$app_token_env)))
-
 # app.R
 library(shiny)
 library(yaml)
@@ -11,6 +9,8 @@ library(rlang)
 
 source(file.path("R","socrata_v3.R"))
 cfg <- yaml::read_yaml("config.yml")
+
+message("Token present? ", nzchar(Sys.getenv(cfg$app_token_env)))
 
 ui <- fluidPage(
   titlePanel("Colorado Open Data — Descriptive Stats (Socrata v3)"),
